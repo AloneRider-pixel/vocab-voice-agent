@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WordWing - Voice Vocabulary Coach</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',system-ui,sans-serif; }
+  body { min-height:100vh; background:linear-gradient(135deg,#0f2027,#203a43,#2c5364); color:#fff; display:flex; flex-direction:column; align-items:center; padding:20px; }
+  h1 { font-size:1.8rem; margin:10px 0 4px; letter-spacing:1px; }
+  .tag { color:#7fd4c1; margin-bottom:18px; font-size:.95rem; }
+  #card { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); border-radius:16px; padding:24px; width:100%; max-width:560px; backdrop-filter:blur(6px); }
+  #status { font-size:1.05rem; min-height:60px; line-height:1.5; }
+  #word { font-size:2rem; color:#ffd166; margin:8px 0; font-weight:700; }
+  #extra { color:#bcd; font-size:.95rem; min-height:44px; line-height:1.45; }
+  #heard { margin-top:10px; font-size:.9rem; color:#9fb7c9; min-height:22px; font-style:italic; }
+  .row { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; justify-content:center; }
+  button { border:none; border-radius:10px; padding:12px 20px; font-size:1rem; cursor:pointer; background:#7fd4c1; color:#0f2027; font-weight:600; transition:transform .1s; }
+  button:hover { transform:scale(1.04); }
+  button.ghost { background:transparent; border:1px solid #7fd4c1; color:#7fd4c1; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #score { margin-top:16px; font-size:1rem; color:#ffd166; text-align:center; }
+  #bar { height:6px; background:rgba(255,255,255,.12); border-radius:3px; margin-top:14px; overflow:hidden; }
+  #fill { height:100%; width:0%; background:#7fd4c1; transition:width .4s; }
+  .mic-on { animation:pulse 1.2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(127,212,193,.5);} 70%{box-shadow:0 0 0 14px rgba(127,212,193,0);} 100%{box-shadow:0 0 0 0 rgba(127,212,193,0);} }
+  #log { margin-top:14px; max-height:120px; overflow-y:auto; font-size:.82rem; color:#8aa; }
+  #log div { padding:2px 0; border-bottom:1px dashed rgba(255,255,255,.08); }
+  footer { margin-top:18px; font-size:.78rem; color:#789; }
+</style>
+</head>
+<body>
+<h1>WordWing</h1>
+<div class="tag">A voice agent that helps you learn vocabulary</div>
+<div id="card">
+  <div id="status">Tap Start and I'll coach you through 8 words: I'll teach each one, quiz you on meanings by voice, and check your pronunciation.</div>
+  <div id="word"></div>
+  <div id="extra"></div>
+  <div id="heard"></div>
+  <div class="row">
+    <button id="startBtn">Start session</button>
+    <button id="repeatBtn" class="ghost" disabled>Repeat word</button>
+    <button id="skipBtn" class="ghost" disabled>Skip</button>
+  </div>
+  <div id="bar"><div id="fill"></div></div>
+  <div id="score"></div>
+  <div id="log"></div>
+</div>
+<footer>Best experienced in Chrome on desktop or Android (microphone required). Built as a working prototype.</footer>
+<script>
+const WORDS = [
+  {w:"ephemeral", pos:"adjective", def:"lasting for a very short time", ex:"The beauty of cherry blossoms is ephemeral.", keys:["short","brief","moment","temporary","fleeting","last"]},
+  {w:"pragmatic", pos:"adjective", def:"dealing with problems in a practical rather than theoretical way", ex:"We need a pragmatic solution, not a perfect one.", keys:["practical","realistic","sensible"]},
+  {w:"lucid", pos:"adjective", def:"clear and easy to understand", ex:"She gave a lucid explanation of the algorithm.", keys:["clear","understand","plain","obvious"]},
+  {w:"tenacious", pos:"adjective", def:"holding firmly to something; persistent and determined", ex:"His tenacious effort finally fixed the bug.", keys:["persist","determin","stubborn","firm","relentless"]},
+  {w:"candid", pos:"adjective", def:"truthful and straightforward; frank", ex:"I appreciate your candid feedback.", keys:["honest","frank","truthful","open","direct","straightforward"]},
+  {w:"meticulous", pos:"adjective", def:"showing great attention to detail; very careful", ex:"The code review was meticulous.", keys:["careful","detail","thorough","precise"]},
+  {w:"resilient", pos:"adjective", def:"able to recover quickly from difficulties", ex:"A resilient system keeps running under failure.", keys:["recover","bounce","tough","strong","withstand"]},
+  {w:"ambiguous", pos:"adjective", def:"open to more than one interpretation; unclear", ex:"His answer was deliberately ambiguous.", keys:["unclear","vague","interpretation","confus","doubt"]}
+];
+let idx=0, phase="idle", score={meaning:0,pron:0}, rec=null, synth=window.speechSynthesis;
+const $=id=>document.getElementById(id);
+const setStatus=t=>$("status").innerText=t;
+const setHeard=t=>$("heard").innerText=t?"I heard: "+t:"";
+const log=t=>{const d=document.createElement("div");d.innerText=t;$("log").prepend(d);};
+const say=(text,rate=0.95)=>new Promise(res=>{ if(!synth){res();return;} synth.cancel();
+  const u=new SpeechSynthesisUtterance(text); u.rate=rate; u.lang="en-US"; u.onend=res; u.onerror=res; synth.speak(u); });
+const norm=s=>(s||"").toLowerCase().replace(/[^a-z\s]/g,"");
+function listen(timeoutMs=9000){ return new Promise(res=>{
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){res(null);return;}
+  if(rec){try{rec.abort()}catch(e){}}
+  rec=new SR(); rec.lang="en-US"; rec.interimResults=false; rec.maxAlternatives=3;
+  let done=false; const fin=v=>{if(done)return;done=true;$("startBtn").classList.remove("mic-on");res(v);};
+  rec.onresult=e=>{const alts=[...e.results[0]].map(a=>a.transcript);fin(alts);};
+  rec.onerror=()=>fin(null); rec.onend=()=>fin(null);
+  setTimeout(()=>{try{rec.stop()}catch(e){}}, timeoutMs);
+  $("startBtn").classList.add("mic-on"); try{rec.start();}catch(e){fin(null);}
+});}
+const update=()=>{ $("fill").style.width=(idx/WORDS.length*100)+"%";
+  $("score").innerText=`Word ${Math.min(idx+1,WORDS.length)} of ${WORDS.length}  |  Meaning ${score.meaning}  |  Pronunciation ${score.pron}`; };
+async function teach(){
+  const it=WORDS[idx]; $("word").innerText=it.w+"  ("+it.pos+")";
+  $("extra").innerText=it.def+". Example: "+it.ex;
+  update();
+  await say(`Word ${idx+1}. ${it.w}. ${it.pos}. It means: ${it.def}. Example. ${it.ex}`);
+  phase="quiz";
+  setStatus(`Now you: what does "${it.w}" mean? Speak your answer.`);
+  await say(`What does ${it.w} mean?`);
+  const ans=await listen();
+  if(ans===null){ setStatus("I couldn't hear you. Check the mic, or tap Repeat to try again."); phase="retry"; return; }
+  const said=Array.isArray(ans)?ans.join(" ").toLowerCase():ans.toLowerCase();
+  setHeard(Array.isArray(ans)?ans[0]:ans);
+  const hit=it.keys.some(k=>said.includes(k));
+  if(hit){ score.meaning++; await say("Correct! Well done."); log(`Meaning: ${it.w} - correct`); }
+  else { await say(`Not quite. ${it.w} means ${it.def}.`); log(`Meaning: ${it.w} - missed`); }
+  phase="pron";
+  setStatus(`Pronunciation round: say the word "${it.w}" clearly.`);
+  await say(`Now say the word ${it.w}.`);
+  const p=await listen(6000);
+  if(p===null){ setStatus("No audio captured. Tap Repeat to retry pronunciation."); phase="retry"; return; }
+  const psaid=(Array.isArray(p)?p:[p]).map(norm);
+  setHeard(Array.isArray(p)?p[0]:p);
+  const ok=psaid.some(s=>s.includes(norm(it.w))||lev(s.trim(),norm(it.w))<=2);
+  if(ok){ score.pron++; await say("Great pronunciation!"); log(`Pronunciation: ${it.w} - ok`); }
+  else { await say(`I heard something different. The word is ${it.w}.`); log(`Pronunciation: ${it.w} - retry later`); }
+  next();
+}
+function lev(a,b){ if(!a||!b)return 9; const m=a.length,n=b.length; if(Math.abs(m-n)>3)return 9;
+  const dp=Array.from({length:m+1},(_,i)=>[i,...Array(n).fill(0)]);
+  for(let j=1;j<=n;j++)dp[0][j]=j;
+  for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)dp[i][j]=Math.min(dp[i-1][j]+1,dp[i][j-1]+1,dp[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  return dp[m][n]; }
+function next(){ idx++; if(idx>=WORDS.length){ finish(); } else { phase="between";
+  setStatus("Tap Next word when ready."); $("startBtn").innerText="Next word"; } }
+async function finish(){ phase="done"; update();
+  const total=WORDS.length;
+  setStatus(`Session complete! Meaning ${score.meaning}/${total}, pronunciation ${score.pron}/${total}. Tap Restart to go again.`);
+  await say(`Session complete. You scored ${score.meaning} out of ${total} on meaning, and ${score.pron} out of ${total} on pronunciation. Great work!`);
+  $("startBtn").innerText="Restart"; }
+$("startBtn").onclick=()=>{ if(phase==="idle"||phase==="done"){ idx=0;score={meaning:0,pron:0};$("log").innerHTML="";$("repeatBtn").disabled=false;$("skipBtn").disabled=false; teach(); }
+  else if(phase==="between") teach();
+  else if(phase==="retry") teach(); };
+$("repeatBtn").onclick=()=>{ if(phase!=="idle"&&phase!=="done") teach(); };
+$("skipBtn").onclick=()=>{ if(phase!=="idle"&&phase!=="done"){ log(`Skipped ${WORDS[idx].w}`); next(); } };
+update();
+</script>
+</body>
+</html>
