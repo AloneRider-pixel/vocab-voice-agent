@@ -111,7 +111,7 @@ function lev(a,b){ if(!a||!b)return 9; const m=a.length,n=b.length; if(Math.abs(
   for(let j=1;j<=n;j++)dp[0][j]=j;
   for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)dp[i][j]=Math.min(dp[i-1][j]+1,dp[i][j-1]+1,dp[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
   return dp[m][n]; }
-function next(){ idx++; if(idx>=WORDS.length){ finish(); } else { phase="between";
+function next(){ idx++; update(); if(idx>=WORDS.length){ finish(); } else { phase="between";
   setStatus("Tap Next word when ready."); $("startBtn").innerText="Next word"; } }
 async function finish(){ phase="done"; update();
   const total=WORDS.length;
